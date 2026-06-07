@@ -1,0 +1,73 @@
+-- jobradar: resumes
+--
+-- Apply the files in this directory in numerical order (01 → 05). Foreign-key
+-- dependencies require the previous tables to exist before the later ones can
+-- reference them. Each file is idempotent on its own (`if not exists` /
+-- `drop … if exists` / `create or replace`), so re-running is safe.
+
+create extension if not exists "pgcrypto";
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Table
+-- ---------------------------------------------------------------------------
+create table if not exists public.resumes (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users (id) on delete cascade,
+  title       text not null,
+  content     text,
+  file_path   text,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+alter table public.resumes
+  add column if not exists updated_at timestamptz not null default now();
+
+create index if not exists resumes_user_id_idx on public.resumes (user_id);
+create index if not exists resumes_user_created_idx
+  on public.resumes (user_id, created_at desc);
+
+drop trigger if exists set_resumes_updated_at on public.resumes;
+create trigger set_resumes_updated_at
+  before update on public.resumes
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- Row Level Security
+-- ---------------------------------------------------------------------------
+alter table public.resumes enable row level security;
+
+-- Legacy single-policy form, dropped here in case it exists from an earlier
+-- version of the schema.
+drop policy if exists "resumes are owner-only" on public.resumes;
+
+drop policy if exists "resumes select own" on public.resumes;
+create policy "resumes select own" on public.resumes
+  for select to authenticated
+  using (user_id = (select auth.uid()));
+
+drop policy if exists "resumes insert own" on public.resumes;
+create policy "resumes insert own" on public.resumes
+  for insert to authenticated
+  with check (user_id = (select auth.uid()));
+
+drop policy if exists "resumes update own" on public.resumes;
+create policy "resumes update own" on public.resumes
+  for update to authenticated
+  using      (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+
+drop policy if exists "resumes delete own" on public.resumes;
+create policy "resumes delete own" on public.resumes
+  for delete to authenticated
+  using (user_id = (select auth.uid()));
