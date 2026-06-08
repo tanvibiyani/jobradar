@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { enabledSources } from "@/lib/ats/sources";
 import { fetchSource } from "@/lib/ats/fetchers";
-import { passesFilter, scoreJob } from "@/lib/ats/scoring";
+import { passesFilter } from "@/lib/ats/scoring";
+import { matchJobToResumes, prepareResume } from "@/lib/ats/match";
 import type { AtsSource, DiscoveredJob, Preferences } from "@/lib/ats/types";
 
 export type ScanState =
@@ -20,11 +21,13 @@ export type ScanState =
 // fetched in full, but only this many requests are in flight at a time so we
 // don't open 100+ sockets or buffer 100+ multi-MB payloads simultaneously.
 const SCAN_CONCURRENCY = 8;
+// MAX_CANDIDATES: cap how many discovered jobs we run the (heavier) resume
+// matcher over per scan, so a preference-free profile can't make us score tens
+// of thousands of jobs. Newest postings are preferred when over the cap.
+const MAX_CANDIDATES = 2500;
 // MAX_STORED: after scoring we keep only the best-ranked jobs, so a scan never
-// writes an unbounded number of rows (and a preference-free profile doesn't
-// dump everything into the table).
+// writes an unbounded number of rows.
 const MAX_STORED = 500;
-const MAX_RESUME_CHARS = 40_000;
 
 /**
  * Run `fn` over `items` with at most `limit` in flight at once. Never rejects —
@@ -120,16 +123,21 @@ export async function runJobScan(
     remote: prefRow?.remote ?? false,
   };
 
-  // --- Load resume text for overlap scoring. -------------------------------
+  // --- Load every resume; the matcher scores each job against all of them. -
   const { data: resumeRows } = await supabase
     .from("resumes")
-    .select("content")
+    .select("id,title,content")
     .order("created_at", { ascending: false });
 
-  const resumeText = (resumeRows ?? [])
-    .map((r) => (r as { content: string | null }).content ?? "")
-    .join("\n")
-    .slice(0, MAX_RESUME_CHARS);
+  const resumes = (resumeRows ?? [])
+    .map((r) => r as { id: string; title: string; content: string | null })
+    .filter((r) => (r.content ?? "").trim().length > 0)
+    .map((r) => ({
+      id: r.id,
+      title: r.title,
+      content: r.content ?? "",
+      prepared: prepareResume(r.content ?? ""),
+    }));
 
   // --- Fetch every enabled source with bounded concurrency. ----------------
   const sources: AtsSource[] = enabledSources();
@@ -150,7 +158,7 @@ export async function runJobScan(
     return { error: "Could not reach any job sources. Please try again later." };
   }
 
-  // --- Dedup by normalized URL, filter, and score. -------------------------
+  // --- Dedup by normalized URL, then narrow by preferences (discovery only).
   const byUrl = new Map<string, DiscoveredJob>();
   for (const job of fetched) {
     const url = normalizeUrl(job.url);
@@ -158,21 +166,35 @@ export async function runJobScan(
     if (!byUrl.has(url)) byUrl.set(url, { ...job, url });
   }
 
-  const scored = [];
-  for (const job of byUrl.values()) {
-    if (!passesFilter(job, prefs)) continue;
-    const match = scoreJob(job, prefs, resumeText);
-    scored.push({ job, match });
-  }
+  let candidates = [...byUrl.values()].filter((job) => passesFilter(job, prefs));
 
-  if (scored.length === 0) {
+  if (candidates.length === 0) {
     return {
       ok: true,
       message:
         `Scanned ${sourcesOk} source${sourcesOk === 1 ? "" : "s"} — no jobs ` +
-        "matched your preferences. Try broadening your roles, locations, or keywords.",
+        "matched your discovery preferences. Try broadening roles, locations, or keywords.",
     };
   }
+
+  // Cap the matcher's workload, preferring the most recently posted jobs.
+  if (candidates.length > MAX_CANDIDATES) {
+    candidates = candidates
+      .slice()
+      .sort((a, b) => (b.posted_at ?? "").localeCompare(a.posted_at ?? ""))
+      .slice(0, MAX_CANDIDATES);
+  }
+
+  // --- Score each job against EVERY resume; keep the best resume's match. ---
+  const scored = candidates.map((job) => ({
+    job,
+    match: matchJobToResumes(
+      job.title,
+      job.company_name,
+      job.description,
+      resumes,
+    ),
+  }));
 
   // Rank by score (nulls last) and keep the top slice.
   scored.sort((a, b) => (b.match.score ?? -1) - (a.match.score ?? -1));
@@ -200,12 +222,13 @@ export async function runJobScan(
 
   if (jobsError) return { error: `Save failed: ${jobsError.message}` };
 
-  // --- Upsert per-job match rows (score + reasons) into job_matches. --------
+  // --- Upsert the per-job match detail (best resume, keywords, tweaks). -----
   const idByUrl = new Map<string, string>();
   for (const row of upserted ?? []) {
     idByUrl.set((row as { id: string; url: string }).url, (row as { id: string }).id);
   }
 
+  const scoredAt = new Date().toISOString();
   const matchRows = keep
     .map(({ job, match }) => {
       const jobId = idByUrl.get(job.url);
@@ -213,8 +236,15 @@ export async function runJobScan(
       return {
         user_id: user.id,
         job_id: jobId,
+        resume_id: match.bestResumeId,
+        best_resume_id: match.bestResumeId,
+        best_resume_title: match.bestResumeTitle,
         score: match.score,
-        reasons: match.reasons,
+        matched_keywords: match.matchedKeywords,
+        matched_phrases: match.matchedPhrases,
+        missing_keywords: match.missingKeywords,
+        resume_tweaks: match.resumeTweaks,
+        scored_at: scoredAt,
       };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
@@ -230,8 +260,8 @@ export async function runJobScan(
       return {
         ok: true,
         message:
-          `Discovered ${keep.length} matching job${keep.length === 1 ? "" : "s"}, ` +
-          `but scoring couldn't be saved: ${matchError.message}`,
+          `Discovered ${keep.length} job${keep.length === 1 ? "" : "s"}, ` +
+          `but match details couldn't be saved: ${matchError.message}`,
       };
     }
   }
@@ -239,12 +269,23 @@ export async function runJobScan(
   revalidatePath("/jobs");
   revalidatePath("/dashboard");
 
+  if (resumes.length === 0) {
+    return {
+      ok: true,
+      message:
+        `Scanned ${sourcesOk} source${sourcesOk === 1 ? "" : "s"} · ` +
+        `${keep.length} job${keep.length === 1 ? "" : "s"} discovered. ` +
+        "Upload a resume to get match scores.",
+    };
+  }
+
   const top = keep[0].match.score;
   return {
     ok: true,
     message:
       `Scanned ${sourcesOk} source${sourcesOk === 1 ? "" : "s"} · ` +
-      `${keep.length} matching job${keep.length === 1 ? "" : "s"}` +
+      `${keep.length} job${keep.length === 1 ? "" : "s"} matched against ` +
+      `${resumes.length} resume${resumes.length === 1 ? "" : "s"}` +
       (typeof top === "number" ? ` · best match ${top}%` : ""),
   };
 }

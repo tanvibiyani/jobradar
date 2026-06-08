@@ -5,9 +5,16 @@ import { dismissJob, restoreJob } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-type MatchReasons = {
-  summary?: string;
-  notes?: string[];
+const DEFAULT_MIN = 50; // hide jobs below this match score unless asked otherwise
+
+type JobMatch = {
+  score: number | null;
+  status: string | null;
+  best_resume_title: string | null;
+  matched_keywords: string[] | null;
+  matched_phrases: string[] | null;
+  missing_keywords: string[] | null;
+  resume_tweaks: string[] | null;
 };
 
 type JobRow = {
@@ -20,21 +27,14 @@ type JobRow = {
   match_score: number | null;
   discovered_at: string | null;
   created_at: string;
-  // Legacy manually-tracked jobs link to a company via company_id; discovered
-  // jobs carry company_name directly. We fall back to the embedded company.
   companies: { name: string } | null;
-  // Scoring + triage state for this job, embedded from job_matches via its
-  // job_id FK. One row per job (unique on user_id, job_id) or empty for legacy
-  // jobs that were never scored.
-  job_matches: { reasons: MatchReasons | null; status: string | null }[] | null;
+  job_matches: JobMatch[] | null;
 };
 
-/** searchParams values arrive as string | string[]; take the first scalar. */
 function first(v: string | string[] | undefined): string {
   return (Array.isArray(v) ? v[0] : v) ?? "";
 }
 
-/** Strip characters that have meaning in PostgREST filter syntax. */
 function safeLike(value: string): string {
   return value.replace(/[%,()*]/g, " ").trim().slice(0, 100);
 }
@@ -47,32 +47,71 @@ function formatDate(iso: string | null): string {
     year: "numeric",
     month: "short",
     day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
   });
 }
 
-function ScoreBadge({
-  score,
-  breakdown,
-}: {
-  score: number | null;
-  breakdown?: string;
-}) {
-  if (score === null) return <span className="text-zinc-400">—</span>;
-  const tone =
-    score >= 60
+function applyHref(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function ScoreBadge({ score }: { score: number | null }) {
+  if (score === null) {
+    return (
+      <span className="inline-flex h-9 min-w-[3.25rem] items-center justify-center rounded-md bg-zinc-100 px-2 text-sm font-semibold text-zinc-400 dark:bg-zinc-800">
+        —
+      </span>
+    );
+  }
+  const standout = score >= 90;
+  const tone = standout
+    ? "bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-300 dark:ring-emerald-700"
+    : score >= 70
       ? "bg-green-100 text-green-800 dark:bg-green-950/50 dark:text-green-300"
-      : score >= 30
+      : score >= 50
         ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
         : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
   return (
     <span
-      title={breakdown}
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}
+      className={`inline-flex h-9 min-w-[3.25rem] items-center justify-center gap-0.5 rounded-md px-2 text-sm font-semibold ${tone}`}
     >
+      {standout ? <span aria-hidden>★</span> : null}
       {score}%
     </span>
+  );
+}
+
+function Chips({
+  items,
+  tone,
+  max,
+}: {
+  items: string[];
+  tone: "match" | "miss";
+  max?: number;
+}) {
+  if (!items.length) return null;
+  const shown = max ? items.slice(0, max) : items;
+  const extra = max ? items.length - shown.length : 0;
+  const cls =
+    tone === "match"
+      ? "bg-green-50 text-green-700 ring-green-200 dark:bg-green-950/40 dark:text-green-300 dark:ring-green-900"
+      : "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900";
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {shown.map((t) => (
+        <span
+          key={t}
+          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ring-1 ring-inset ${cls}`}
+        >
+          {t}
+        </span>
+      ))}
+      {extra > 0 ? (
+        <span className="inline-flex items-center px-1 text-xs text-zinc-500">
+          +{extra} more
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -87,14 +126,18 @@ export default async function JobsPage({
   // --- Parse filter state out of the URL. ----------------------------------
   const isSubmitted = first(sp.filtered) === "1";
   const minRaw = first(sp.min).trim();
-  const minScore = minRaw === "" ? null : Number.parseInt(minRaw, 10);
+  const userMin = minRaw === "" ? 0 : Number.parseInt(minRaw, 10);
   const company = first(sp.company).trim();
   const source = first(sp.source).trim();
   const location = safeLike(first(sp.location));
   const q = safeLike(first(sp.q));
   const sort = first(sp.sort) === "newest" ? "newest" : "match";
-  // "Hide dismissed" defaults ON; once the form is submitted, honor the box.
   const hideDismissed = isSubmitted ? first(sp.hide_dismissed) === "1" : true;
+  const includeBelow50 = first(sp.below50) === "1";
+
+  // Hide below 50% by default; the floor drops to 0 when the user opts in.
+  const floor = includeBelow50 ? 0 : DEFAULT_MIN;
+  const effectiveMin = Math.max(Number.isNaN(userMin) ? 0 : userMin, floor);
 
   const values: JobFilterValues = {
     min: minRaw,
@@ -104,18 +147,20 @@ export default async function JobsPage({
     q: first(sp.q).trim().slice(0, 100),
     sort,
     hideDismissed,
+    includeBelow50,
   };
 
   const filtersActive =
-    minScore !== null ||
     company !== "" ||
     source !== "" ||
     location !== "" ||
     q !== "" ||
     sort !== "match" ||
+    includeBelow50 ||
+    (Number.isFinite(userMin) && userMin > 0) ||
     (isSubmitted && !hideDismissed);
 
-  // --- Facet options (distinct companies/sources across all the user's jobs).
+  // --- Facet options (distinct companies/sources across the user's jobs). ---
   const { data: facetData } = await supabase
     .from("jobs")
     .select("company_name,source");
@@ -135,16 +180,13 @@ export default async function JobsPage({
   ].sort((a, b) => a.localeCompare(b));
 
   // --- Build the filtered, sorted query. -----------------------------------
-  // RLS ("jobs select own") restricts this to the signed-in user's rows.
   let query = supabase
     .from("jobs")
     .select(
-      "id,title,company_name,location,source,apply_url:url,match_score,discovered_at,created_at,companies(name),job_matches(reasons,status)",
+      "id,title,company_name,location,source,apply_url:url,match_score,discovered_at,created_at,companies(name),job_matches(score,status,best_resume_title,matched_keywords,matched_phrases,missing_keywords,resume_tweaks)",
     );
 
-  if (minScore !== null && !Number.isNaN(minScore)) {
-    query = query.gte("match_score", minScore);
-  }
+  if (effectiveMin > 0) query = query.gte("match_score", effectiveMin);
   if (company) query = query.eq("company_name", company);
   if (source) query = query.eq("source", source);
   if (location) query = query.ilike("location", `%${location}%`);
@@ -164,9 +206,6 @@ export default async function JobsPage({
   const { data, error } = await query;
   let jobs = (data ?? []) as unknown as JobRow[];
 
-  // "Hide dismissed" filters on the embedded job_matches.status. We do it here
-  // (rather than in PostgREST) because excluding a *parent* by a child column
-  // needs an inner join + negation that's clumsier than a small in-memory pass.
   if (hideDismissed) {
     jobs = jobs.filter((j) => j.job_matches?.[0]?.status !== "rejected");
   }
@@ -176,8 +215,8 @@ export default async function JobsPage({
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Discovered across public job boards and ranked by how well they match
-          you.
+          Discovered across public job boards and scored on how well your
+          resumes align with each description.
         </p>
       </header>
 
@@ -203,118 +242,178 @@ export default async function JobsPage({
         </p>
       ) : null}
 
-      <section className="mt-8">
+      <section className="mt-8 space-y-3">
         {jobs.length === 0 ? (
-          filtersActive ? (
+          filtersActive || !includeBelow50 ? (
             <p className="rounded-md border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-              No jobs match your filters.{" "}
-              <a href="/jobs" className="text-blue-600 hover:underline dark:text-blue-400">
-                Clear filters
+              No jobs at this match level. Upload a{" "}
+              <a href="/resumes" className="text-blue-600 hover:underline dark:text-blue-400">
+                resume
+              </a>
+              , run a scan, or{" "}
+              <a href="/jobs?below50=1" className="text-blue-600 hover:underline dark:text-blue-400">
+                show matches below 50%
               </a>
               .
             </p>
           ) : (
             <p className="rounded-md border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-              No jobs yet. Set your{" "}
-              <a href="/preferences" className="text-blue-600 hover:underline dark:text-blue-400">
-                preferences
+              No jobs yet. Upload a{" "}
+              <a href="/resumes" className="text-blue-600 hover:underline dark:text-blue-400">
+                resume
               </a>{" "}
-              and click <span className="font-medium">Run Job Scan</span> to
-              discover matches.
+              and click <span className="font-medium">Run Job Scan</span>.
             </p>
           )
         ) : (
           <>
-            <p className="mb-3 text-xs text-zinc-500">
+            <p className="text-xs text-zinc-500">
               {jobs.length} job{jobs.length === 1 ? "" : "s"}
+              {!includeBelow50 ? " · matches ≥ 50%" : ""}
             </p>
-            <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Match</th>
-                    <th className="px-4 py-3 font-medium">Title</th>
-                    <th className="px-4 py-3 font-medium">Company</th>
-                    <th className="px-4 py-3 font-medium">Location</th>
-                    <th className="px-4 py-3 font-medium">Source</th>
-                    <th className="px-4 py-3 font-medium">Apply</th>
-                    <th className="px-4 py-3 font-medium">Discovered</th>
-                    <th className="px-4 py-3" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                  {jobs.map((j) => {
-                    const match = j.job_matches?.[0] ?? null;
-                    const reasons = match?.reasons ?? null;
-                    const why = reasons?.notes?.length
-                      ? reasons.notes.join(" · ")
-                      : null;
-                    const dismissed = match?.status === "rejected";
-                    return (
-                      <tr key={j.id} className={dismissed ? "opacity-60" : undefined}>
-                        <td className="px-4 py-3 align-top">
-                          <ScoreBadge
-                            score={j.match_score}
-                            breakdown={reasons?.summary}
-                          />
-                        </td>
-                        <td className="px-4 py-3 align-top font-medium">
-                          {j.title}
-                          {why ? (
-                            <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
-                              {why}
-                            </span>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-3 align-top text-zinc-600 dark:text-zinc-400">
-                          {j.company_name ?? j.companies?.name ?? (
-                            <span className="text-zinc-400">—</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 align-top text-zinc-600 dark:text-zinc-400">
-                          {j.location ?? <span className="text-zinc-400">—</span>}
-                        </td>
-                        <td className="px-4 py-3 align-top text-zinc-600 dark:text-zinc-400">
-                          {j.source ?? <span className="text-zinc-400">—</span>}
-                        </td>
-                        <td className="px-4 py-3 align-top">
-                          {j.apply_url ? (
-                            <a
-                              href={
-                                /^https?:\/\//i.test(j.apply_url)
-                                  ? j.apply_url
-                                  : `https://${j.apply_url}`
-                              }
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline dark:text-blue-400"
-                            >
-                              Apply
-                            </a>
-                          ) : (
-                            <span className="text-zinc-400">—</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 align-top text-zinc-600 dark:text-zinc-400">
-                          {formatDate(j.discovered_at ?? j.created_at)}
-                        </td>
-                        <td className="px-4 py-3 align-top text-right">
-                          <form action={dismissed ? restoreJob : dismissJob}>
-                            <input type="hidden" name="id" value={j.id} />
-                            <button
-                              type="submit"
-                              className="text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-                            >
-                              {dismissed ? "Restore" : "Dismiss"}
-                            </button>
-                          </form>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+
+            {jobs.map((j) => {
+              const m = j.job_matches?.[0] ?? null;
+              const company = j.company_name ?? j.companies?.name ?? null;
+              const matchedPhrases = m?.matched_phrases ?? [];
+              const matchedKeywords = m?.matched_keywords ?? [];
+              const missingKeywords = m?.missing_keywords ?? [];
+              const tweaks = m?.resume_tweaks ?? [];
+              const dismissed = m?.status === "rejected";
+              const standout = (j.match_score ?? 0) >= 90;
+              const hasDetails =
+                Boolean(m?.best_resume_title) ||
+                matchedPhrases.length > 0 ||
+                matchedKeywords.length > 0 ||
+                missingKeywords.length > 0 ||
+                tweaks.length > 0;
+
+              return (
+                <article
+                  key={j.id}
+                  className={`rounded-lg border p-4 ${
+                    dismissed ? "opacity-60 " : ""
+                  }${
+                    standout
+                      ? "border-emerald-300 bg-emerald-50/40 dark:border-emerald-800 dark:bg-emerald-950/20"
+                      : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <ScoreBadge score={j.match_score} />
+                      <div className="min-w-0">
+                        <h3 className="font-medium leading-tight">{j.title}</h3>
+                        <p className="mt-0.5 truncate text-sm text-zinc-600 dark:text-zinc-400">
+                          {[company, j.location, j.source]
+                            .filter(Boolean)
+                            .join(" · ") || "—"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      {j.apply_url ? (
+                        <a
+                          href={applyHref(j.apply_url)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                        >
+                          Apply
+                        </a>
+                      ) : null}
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {formatDate(j.discovered_at ?? j.created_at)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {m?.best_resume_title ? (
+                    <p className="mt-3 text-sm">
+                      <span className="text-zinc-500">Best resume to use: </span>
+                      <span className="font-medium">{m.best_resume_title}</span>
+                    </p>
+                  ) : null}
+
+                  {matchedPhrases.length > 0 || matchedKeywords.length > 0 ? (
+                    <div className="mt-2">
+                      <Chips
+                        items={[...matchedPhrases, ...matchedKeywords]}
+                        tone="match"
+                        max={10}
+                      />
+                    </div>
+                  ) : null}
+
+                  {hasDetails ? (
+                    <details className="group mt-3">
+                      <summary className="cursor-pointer list-none text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+                        <span className="group-open:hidden">
+                          Show match details &amp; resume tweaks ▾
+                        </span>
+                        <span className="hidden group-open:inline">
+                          Hide match details ▴
+                        </span>
+                      </summary>
+
+                      <div className="mt-3 space-y-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                        {matchedPhrases.length > 0 ? (
+                          <div>
+                            <p className="mb-1 text-xs font-medium text-zinc-500">
+                              Matched phrases
+                            </p>
+                            <Chips items={matchedPhrases} tone="match" />
+                          </div>
+                        ) : null}
+
+                        {matchedKeywords.length > 0 ? (
+                          <div>
+                            <p className="mb-1 text-xs font-medium text-zinc-500">
+                              Matched keywords
+                            </p>
+                            <Chips items={matchedKeywords} tone="match" />
+                          </div>
+                        ) : null}
+
+                        {missingKeywords.length > 0 ? (
+                          <div>
+                            <p className="mb-1 text-xs font-medium text-zinc-500">
+                              Missing from your resume
+                            </p>
+                            <Chips items={missingKeywords} tone="miss" />
+                          </div>
+                        ) : null}
+
+                        {tweaks.length > 0 ? (
+                          <div>
+                            <p className="mb-1 text-xs font-medium text-zinc-500">
+                              Suggested resume tweaks
+                            </p>
+                            <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-700 dark:text-zinc-300">
+                              {tweaks.map((t, i) => (
+                                <li key={i}>{t}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
+                    </details>
+                  ) : null}
+
+                  <div className="mt-3 flex justify-end">
+                    <form action={dismissed ? restoreJob : dismissJob}>
+                      <input type="hidden" name="id" value={j.id} />
+                      <button
+                        type="submit"
+                        className="text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                      >
+                        {dismissed ? "Restore" : "Dismiss"}
+                      </button>
+                    </form>
+                  </div>
+                </article>
+              );
+            })}
           </>
         )}
       </section>

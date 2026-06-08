@@ -12,6 +12,7 @@ export type JobFilterValues = {
   q: string;
   sort: string;
   hideDismissed: boolean;
+  includeBelow50: boolean;
 };
 
 const fieldClass =
@@ -111,6 +112,17 @@ export function JobFilters({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-4">
+        <label className="inline-flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            name="below50"
+            value="1"
+            defaultChecked={values.includeBelow50}
+            className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+          />
+          Show matches below 50%
+        </label>
+
         <label className="inline-flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
           <input
             type="checkbox"
