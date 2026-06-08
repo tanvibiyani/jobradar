@@ -33,6 +33,13 @@ create table if not exists public.resumes (
 alter table public.resumes
   add column if not exists updated_at timestamptz not null default now();
 
+-- Make user_id default to the caller's auth.uid() so the application never has
+-- to populate it. The BEFORE INSERT trigger below overrides any value the
+-- client sends, which keeps the row consistent with the RLS check by
+-- construction.
+alter table public.resumes
+  alter column user_id set default auth.uid();
+
 create index if not exists resumes_user_id_idx on public.resumes (user_id);
 create index if not exists resumes_user_created_idx
   on public.resumes (user_id, created_at desc);
@@ -41,6 +48,45 @@ drop trigger if exists set_resumes_updated_at on public.resumes;
 create trigger set_resumes_updated_at
   before update on public.resumes
   for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- Force-owner trigger
+--
+-- Pins user_id := auth.uid() on every INSERT regardless of what the client
+-- sends. If auth.uid() is null (the request reached PostgREST without a
+-- valid JWT) we raise a precise error instead of letting the request fail
+-- the RLS check with the opaque "new row violates row-level security
+-- policy" message.
+-- ---------------------------------------------------------------------------
+create or replace function public.resumes_force_owner()
+returns trigger
+language plpgsql
+security invoker
+as $$
+begin
+  new.user_id := auth.uid();
+  if new.user_id is null then
+    raise exception 'auth.uid() is null at insert time — request is not authenticated'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists resumes_force_owner_trg on public.resumes;
+create trigger resumes_force_owner_trg
+  before insert on public.resumes
+  for each row execute function public.resumes_force_owner();
+
+-- ---------------------------------------------------------------------------
+-- Grants
+--
+-- The `authenticated` role needs base SQL privileges before RLS is consulted.
+-- Without these, Postgres returns "permission denied for table resumes"
+-- before the policy is even evaluated. grant is idempotent.
+-- ---------------------------------------------------------------------------
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.resumes to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Row Level Security
