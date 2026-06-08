@@ -335,20 +335,11 @@ export async function fetchJobs(
     };
   }
 
-  const source = (() => {
-    try {
-      return new URL(company.careers_url).hostname;
-    } catch {
-      return null;
-    }
-  })();
-
   const rows = scraped.map((j) => ({
     user_id: user.id,
     company_id: company.id,
     title: j.title,
     url: j.url,
-    source,
   }));
 
   // Dedup by URL: the unique index on (user_id, url) backs ON CONFLICT DO
