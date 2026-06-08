@@ -3,6 +3,11 @@ import { RunScan } from "./scan-button";
 
 export const dynamic = "force-dynamic";
 
+type MatchReasons = {
+  summary?: string;
+  notes?: string[];
+};
+
 type JobRow = {
   id: string;
   title: string;
@@ -16,6 +21,10 @@ type JobRow = {
   // Legacy manually-tracked jobs link to a company via company_id; discovered
   // jobs carry company_name directly. We fall back to the embedded company.
   companies: { name: string } | null;
+  // The scoring breakdown for this job, embedded from job_matches via its
+  // job_id FK. One row per job (unique on user_id, job_id) or empty for
+  // legacy jobs that were never scored.
+  job_matches: { reasons: MatchReasons | null }[] | null;
 };
 
 function formatDate(iso: string | null): string {
@@ -31,16 +40,23 @@ function formatDate(iso: string | null): string {
   });
 }
 
-function ScoreBadge({ score }: { score: number | null }) {
+function ScoreBadge({
+  score,
+  breakdown,
+}: {
+  score: number | null;
+  breakdown?: string;
+}) {
   if (score === null) return <span className="text-zinc-400">—</span>;
   const tone =
-    score >= 70
+    score >= 60
       ? "bg-green-100 text-green-800 dark:bg-green-950/50 dark:text-green-300"
-      : score >= 40
+      : score >= 30
         ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
         : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
   return (
     <span
+      title={breakdown}
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}
     >
       {score}%
@@ -56,7 +72,7 @@ export default async function JobsPage() {
   const { data, error } = await supabase
     .from("jobs")
     .select(
-      "id,title,company_name,location,source,apply_url:url,match_score,discovered_at,created_at,companies(name)",
+      "id,title,company_name,location,source,apply_url:url,match_score,discovered_at,created_at,companies(name),job_matches(reasons)",
     )
     .order("match_score", { ascending: false, nullsFirst: false })
     .order("discovered_at", { ascending: false, nullsFirst: false })
@@ -112,12 +128,27 @@ export default async function JobsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                {jobs.map((j) => (
+                {jobs.map((j) => {
+                  const reasons = j.job_matches?.[0]?.reasons ?? null;
+                  const why = reasons?.notes?.length
+                    ? reasons.notes.join(" · ")
+                    : null;
+                  return (
                   <tr key={j.id}>
-                    <td className="px-4 py-3">
-                      <ScoreBadge score={j.match_score} />
+                    <td className="px-4 py-3 align-top">
+                      <ScoreBadge
+                        score={j.match_score}
+                        breakdown={reasons?.summary}
+                      />
                     </td>
-                    <td className="px-4 py-3 font-medium">{j.title}</td>
+                    <td className="px-4 py-3 align-top font-medium">
+                      {j.title}
+                      {why ? (
+                        <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                          {why}
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                       {j.company_name ?? j.companies?.name ?? (
                         <span className="text-zinc-400">—</span>
@@ -151,7 +182,8 @@ export default async function JobsPage() {
                       {formatDate(j.discovered_at ?? j.created_at)}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

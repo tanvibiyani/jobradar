@@ -46,11 +46,20 @@ export type Preferences = {
 export type MatchResult = {
   /** 0–100, rounded. Null when there's nothing to score against. */
   score: number | null;
-  reasons: {
-    title: number;
-    keywords: number;
-    resume: number;
-    location: number;
-    notes: string[];
-  };
+  reasons: MatchReasons;
+};
+
+/**
+ * Per-dimension points awarded (already capped), plus human-readable summaries
+ * for display on the Jobs page. Stored as JSONB in job_matches.reasons.
+ */
+export type MatchReasons = {
+  title: number; // 0–35
+  keywords: number; // 0–25
+  resume: number; // 0–25
+  location: number; // 0–15
+  /** One-line numeric breakdown, e.g. "Title 35/35 · Keywords 12/25 · …". */
+  summary: string;
+  /** Short phrases naming which dimensions contributed, e.g. ["title match"]. */
+  notes: string[];
 };

@@ -1,5 +1,11 @@
 import type { DiscoveredJob, MatchResult, Preferences } from "./types";
 
+// Fixed point caps per dimension (sum = 100). Scores are an absolute sum of
+// these — never renormalized — so reaching 100 requires a job to max out *all
+// four* dimensions at once, which is rare. A sparse profile (e.g. only roles
+// set) is bounded by the caps of the dimensions it actually fills.
+const CAPS = { title: 35, keywords: 25, resume: 25, location: 15 } as const;
+
 // ---------------------------------------------------------------------------
 // Rules-based matching. No LLMs — just token overlap and string matching.
 //
@@ -92,9 +98,12 @@ export function passesFilter(job: DiscoveredJob, prefs: Preferences): boolean {
 }
 
 /**
- * Score a job 0–100 against preferences and resume text. Each dimension is only
- * weighted when there's something to compare against, then the active weights
- * are renormalized so a sparse profile still yields a meaningful score.
+ * Score a job 0–100 against preferences and resume text using fixed per-
+ * dimension caps (title 35, keywords 25, resume 25, location 15). Each
+ * dimension contributes its cap × a 0–1 sub-score; inactive dimensions (no
+ * roles, no keywords, no resume, no location/remote preference) contribute 0
+ * and are NOT renormalized away. A perfect 100 therefore requires a job to
+ * fully satisfy every dimension simultaneously, so high scores stay rare.
  */
 export function scoreJob(
   job: DiscoveredJob,
@@ -102,64 +111,77 @@ export function scoreJob(
   resumeText: string,
 ): MatchResult {
   const haystack = `${job.title} ${job.description ?? ""}`;
-  const notes: string[] = [];
 
-  const title = prefs.roles.length ? phraseHitRate(prefs.roles, job.title) : 0;
-  const keywords = prefs.keywords.length ? phraseHitRate(prefs.keywords, haystack) : 0;
-
-  // Resume overlap: share of the resume's significant tokens that show up in the
-  // posting. Caps at 0.6 raw before normalizing so a perfect 1.0 isn't required.
-  let resume = 0;
+  const rolesActive = prefs.roles.length > 0;
+  const keywordsActive = prefs.keywords.length > 0;
   const resumeTokens = resumeText ? tokenSet(resumeText) : new Set<string>();
-  if (resumeTokens.size > 0) {
+  const resumeActive = resumeTokens.size > 0;
+  const wantsLocation = prefs.locations.length > 0 || prefs.remote;
+
+  if (!rolesActive && !keywordsActive && !resumeActive && !wantsLocation) {
+    return {
+      score: null,
+      reasons: {
+        title: 0,
+        keywords: 0,
+        resume: 0,
+        location: 0,
+        summary: "No preferences or resume to score against.",
+        notes: [],
+      },
+    };
+  }
+
+  // Title: how well the posting title matches the user's target roles.
+  const titleSub = rolesActive ? phraseHitRate(prefs.roles, job.title) : 0;
+
+  // Keywords: share of preference keywords found anywhere in the posting.
+  const keywordSub = keywordsActive ? phraseHitRate(prefs.keywords, haystack) : 0;
+
+  // Resume overlap: share of the posting's significant tokens that also appear
+  // in the resume. Denominator is capped so a perfect 1.0 is hard to reach.
+  let resumeSub = 0;
+  if (resumeActive) {
     const jobTokens = tokenSet(haystack);
     let shared = 0;
     for (const t of jobTokens) if (resumeTokens.has(t)) shared++;
     const denom = Math.min(jobTokens.size, 60) || 1;
-    resume = Math.min(1, shared / denom);
+    resumeSub = Math.min(1, shared / denom);
   }
 
-  // Location / remote fit.
-  const wantsLocation = prefs.locations.length > 0 || prefs.remote;
-  let location = 0;
+  // Location / remote fit (binary-ish): full credit for an exact remote or
+  // location match, half for a remote job when only locations were requested.
+  let locationSub = 0;
   if (wantsLocation) {
-    if (prefs.remote && job.remote) location = 1;
-    else if (prefs.locations.length && locationMatches(job, prefs.locations)) location = 1;
-    else if (job.remote) location = 0.5;
+    if (prefs.remote && job.remote) locationSub = 1;
+    else if (prefs.locations.length && locationMatches(job, prefs.locations)) locationSub = 1;
+    else if (job.remote) locationSub = 0.5;
   }
 
-  const dims: Array<{ key: keyof MatchResult["reasons"]; weight: number; value: number; active: boolean }> = [
-    { key: "title", weight: 0.35, value: title, active: prefs.roles.length > 0 },
-    { key: "keywords", weight: 0.25, value: keywords, active: prefs.keywords.length > 0 },
-    { key: "resume", weight: 0.25, value: resume, active: resumeTokens.size > 0 },
-    { key: "location", weight: 0.15, value: location, active: wantsLocation },
-  ];
+  const titlePts = Math.round(titleSub * CAPS.title);
+  const keywordPts = Math.round(keywordSub * CAPS.keywords);
+  const resumePts = Math.round(resumeSub * CAPS.resume);
+  const locationPts = Math.round(locationSub * CAPS.location);
+  const score = titlePts + keywordPts + resumePts + locationPts;
 
-  const active = dims.filter((d) => d.active);
-  if (active.length === 0) {
-    notes.push("No preferences or resume to score against.");
-    return {
-      score: null,
-      reasons: { title: 0, keywords: 0, resume: 0, location: 0, notes },
-    };
-  }
+  const notes: string[] = [];
+  if (titlePts > 0) notes.push("title match");
+  if (keywordPts > 0) notes.push("keyword match");
+  if (resumePts > 0) notes.push("resume overlap");
+  if (locationPts > 0) notes.push(prefs.remote ? "remote match" : "location match");
 
-  const totalWeight = active.reduce((s, d) => s + d.weight, 0);
-  const weighted = active.reduce((s, d) => s + d.weight * d.value, 0);
-  const score = Math.round((weighted / totalWeight) * 100);
-
-  if (title > 0) notes.push("Title matches a target role.");
-  if (keywords > 0) notes.push("Mentions your keywords.");
-  if (resume >= 0.3) notes.push("Strong overlap with your resume.");
-  if (location === 1) notes.push("Location/remote fits.");
+  const summary =
+    `Title ${titlePts}/${CAPS.title} · Keywords ${keywordPts}/${CAPS.keywords} · ` +
+    `Resume ${resumePts}/${CAPS.resume} · Location ${locationPts}/${CAPS.location}`;
 
   return {
     score,
     reasons: {
-      title: Math.round(title * 100) / 100,
-      keywords: Math.round(keywords * 100) / 100,
-      resume: Math.round(resume * 100) / 100,
-      location: Math.round(location * 100) / 100,
+      title: titlePts,
+      keywords: keywordPts,
+      resume: resumePts,
+      location: locationPts,
+      summary,
       notes,
     },
   };
