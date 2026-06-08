@@ -1,17 +1,19 @@
 // Shared types for automated job discovery across public ATS feeds.
 
 /** The three public ATS APIs we know how to read. */
-export type AtsProvider = "greenhouse" | "lever" | "ashby";
+export type AtsType = "greenhouse" | "lever" | "ashby";
 
 /**
- * A company we know how to discover jobs for, seeded directly in code.
- * `token` is the board identifier in that ATS's public API (e.g. the
- * greenhouse board name, the lever account, or the ashby job-board name).
+ * A company we know how to discover jobs for, seeded in the registry
+ * (lib/ats/sources.ts). `ats_slug` is the board identifier in that ATS's
+ * public API (the greenhouse board name, the lever account, or the ashby
+ * job-board name). `enabled` gates whether a scan fetches from it.
  */
 export type AtsSource = {
-  company: string;
-  provider: AtsProvider;
-  token: string;
+  company_name: string;
+  ats_type: AtsType;
+  ats_slug: string;
+  enabled: boolean;
 };
 
 /**

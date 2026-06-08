@@ -2,20 +2,59 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { SEED_SOURCES } from "@/lib/ats/sources";
+import { enabledSources } from "@/lib/ats/sources";
 import { fetchSource } from "@/lib/ats/fetchers";
 import { passesFilter, scoreJob } from "@/lib/ats/scoring";
-import type { DiscoveredJob, Preferences } from "@/lib/ats/types";
+import type { AtsSource, DiscoveredJob, Preferences } from "@/lib/ats/types";
 
 export type ScanState =
   | { ok: true; message: string }
   | { error: string }
   | null;
 
-// Keep a single scan bounded. After scoring we keep the best-ranked jobs so a
-// preference-free profile doesn't dump thousands of rows into the table.
-const MAX_STORED = 300;
+// --- Scan limits ----------------------------------------------------------
+// The registry has ~120+ sources; these bounds keep one scan from overloading
+// the server (and the database). Per-source job caps live in the fetchers.
+//
+// SCAN_CONCURRENCY: how many ATS feeds we fetch at once. The registry is
+// fetched in full, but only this many requests are in flight at a time so we
+// don't open 100+ sockets or buffer 100+ multi-MB payloads simultaneously.
+const SCAN_CONCURRENCY = 8;
+// MAX_STORED: after scoring we keep only the best-ranked jobs, so a scan never
+// writes an unbounded number of rows (and a preference-free profile doesn't
+// dump everything into the table).
+const MAX_STORED = 500;
 const MAX_RESUME_CHARS = 40_000;
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight at once. Never rejects —
+ * each item resolves to a PromiseSettledResult so one bad source can't sink the
+ * scan.
+ */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const idx = next++;
+      try {
+        results[idx] = { status: "fulfilled", value: await fn(items[idx]) };
+      } catch (reason) {
+        results[idx] = { status: "rejected", reason };
+      }
+    }
+  }
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return results;
+}
 
 /**
  * Pin the session into the supabase-js client so RLS-bound writes carry the
@@ -92,8 +131,11 @@ export async function runJobScan(
     .join("\n")
     .slice(0, MAX_RESUME_CHARS);
 
-  // --- Fetch every seed source concurrently; tolerate individual failures. -
-  const settled = await Promise.allSettled(SEED_SOURCES.map((s) => fetchSource(s)));
+  // --- Fetch every enabled source with bounded concurrency. ----------------
+  const sources: AtsSource[] = enabledSources();
+  const settled = await mapLimit(sources, SCAN_CONCURRENCY, (s) =>
+    fetchSource(s),
+  );
 
   const fetched: DiscoveredJob[] = [];
   let sourcesOk = 0;

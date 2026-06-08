@@ -1,37 +1,151 @@
 import type { AtsSource } from "./types";
 
 // ---------------------------------------------------------------------------
-// Seed list of known ATS companies.
+// ATS source registry.
 //
-// JobRadar's MVP discovers jobs from this fixed set of public ATS boards — the
-// user no longer has to add companies by hand before they can find jobs. Each
-// entry's `token` is verified to resolve against that provider's public,
-// unauthenticated API (see lib/ats/fetchers.ts).
+// JobRadar discovers jobs automatically from this registry of public ATS job
+// boards — users never have to add a company by hand. Every slug below was
+// verified to resolve against its provider's public, unauthenticated API
+// (Greenhouse boards API, Lever postings API, or Ashby job-board API) and to
+// return live postings.
 //
-// Notes on a couple of the requested companies:
-//   - Several of them don't run on the ATS the brief guessed. They're mapped
-//     here to the provider whose public feed actually returns their postings
-//     (e.g. Asana/Datadog/Brex/Anthropic on Greenhouse, Ramp/Notion/Plaid/
-//     Perplexity on Ashby, Glean on Greenhouse under the "gleanwork" board).
-//   - Rippling does not expose a public Greenhouse/Lever/Ashby board, so it is
-//     intentionally omitted rather than left as a dead endpoint that 404s on
-//     every scan.
-//   - Spotify (Lever) is included so discovery exercises all three providers.
+// Spread across SaaS, AI, fintech, data, productivity, devtools, cloud, and
+// security. ~126 companies, ~16k live postings at time of seeding.
+//
+// `enabled` gates whether a scan fetches from a source. Flip it to false to
+// retire a board (e.g. a slug that has gone dead) without deleting the row, or
+// to temporarily narrow a scan. The scanner only loops over enabled sources.
 // ---------------------------------------------------------------------------
-export const SEED_SOURCES: AtsSource[] = [
-  // Greenhouse
-  { company: "Asana", provider: "greenhouse", token: "asana" },
-  { company: "Datadog", provider: "greenhouse", token: "datadog" },
-  { company: "Brex", provider: "greenhouse", token: "brex" },
-  { company: "Anthropic", provider: "greenhouse", token: "anthropic" },
-  { company: "Glean", provider: "greenhouse", token: "gleanwork" },
-
-  // Ashby
-  { company: "Ramp", provider: "ashby", token: "ramp" },
-  { company: "Notion", provider: "ashby", token: "notion" },
-  { company: "Plaid", provider: "ashby", token: "plaid" },
-  { company: "Perplexity", provider: "ashby", token: "perplexity" },
-
-  // Lever
-  { company: "Spotify", provider: "lever", token: "spotify" },
+export const SOURCES: AtsSource[] = [
+  { company_name: "Abnormal Security", ats_type: "greenhouse", ats_slug: "abnormalsecurity", enabled: true },
+  { company_name: "Abridge", ats_type: "ashby", ats_slug: "abridge", enabled: true },
+  { company_name: "Affirm", ats_type: "greenhouse", ats_slug: "affirm", enabled: true },
+  { company_name: "Airbnb", ats_type: "greenhouse", ats_slug: "airbnb", enabled: true },
+  { company_name: "Airbyte", ats_type: "ashby", ats_slug: "airbyte", enabled: true },
+  { company_name: "Airtable", ats_type: "greenhouse", ats_slug: "airtable", enabled: true },
+  { company_name: "Amplitude", ats_type: "greenhouse", ats_slug: "amplitude", enabled: true },
+  { company_name: "Anduril", ats_type: "greenhouse", ats_slug: "andurilindustries", enabled: true },
+  { company_name: "Anrok", ats_type: "ashby", ats_slug: "anrok", enabled: true },
+  { company_name: "Anthropic", ats_type: "greenhouse", ats_slug: "anthropic", enabled: true },
+  { company_name: "Asana", ats_type: "greenhouse", ats_slug: "asana", enabled: true },
+  { company_name: "Ashby", ats_type: "ashby", ats_slug: "ashby", enabled: true },
+  { company_name: "Atlan", ats_type: "ashby", ats_slug: "atlan", enabled: true },
+  { company_name: "Baseten", ats_type: "ashby", ats_slug: "baseten", enabled: true },
+  { company_name: "Bill", ats_type: "greenhouse", ats_slug: "billcom", enabled: true },
+  { company_name: "Box", ats_type: "greenhouse", ats_slug: "boxinc", enabled: true },
+  { company_name: "Brex", ats_type: "greenhouse", ats_slug: "brex", enabled: true },
+  { company_name: "Calendly", ats_type: "greenhouse", ats_slug: "calendly", enabled: true },
+  { company_name: "Carta", ats_type: "greenhouse", ats_slug: "carta", enabled: true },
+  { company_name: "Cartesia", ats_type: "ashby", ats_slug: "cartesia", enabled: true },
+  { company_name: "Character AI", ats_type: "ashby", ats_slug: "character", enabled: true },
+  { company_name: "Checkr", ats_type: "greenhouse", ats_slug: "checkr", enabled: true },
+  { company_name: "Chime", ats_type: "greenhouse", ats_slug: "chime", enabled: true },
+  { company_name: "ClickHouse", ats_type: "greenhouse", ats_slug: "clickhouse", enabled: true },
+  { company_name: "ClickUp", ats_type: "ashby", ats_slug: "clickup", enabled: true },
+  { company_name: "Cloudflare", ats_type: "greenhouse", ats_slug: "cloudflare", enabled: true },
+  { company_name: "Cockroach Labs", ats_type: "greenhouse", ats_slug: "cockroachlabs", enabled: true },
+  { company_name: "Cohere", ats_type: "ashby", ats_slug: "cohere", enabled: true },
+  { company_name: "Column", ats_type: "ashby", ats_slug: "column", enabled: true },
+  { company_name: "CoreWeave", ats_type: "greenhouse", ats_slug: "coreweave", enabled: true },
+  { company_name: "Coursera", ats_type: "greenhouse", ats_slug: "coursera", enabled: true },
+  { company_name: "Cresta", ats_type: "greenhouse", ats_slug: "cresta", enabled: true },
+  { company_name: "Cribl", ats_type: "greenhouse", ats_slug: "cribl", enabled: true },
+  { company_name: "Databricks", ats_type: "greenhouse", ats_slug: "databricks", enabled: true },
+  { company_name: "Datadog", ats_type: "greenhouse", ats_slug: "datadog", enabled: true },
+  { company_name: "Decagon", ats_type: "ashby", ats_slug: "decagon", enabled: true },
+  { company_name: "Deel", ats_type: "ashby", ats_slug: "deel", enabled: true },
+  { company_name: "Discord", ats_type: "greenhouse", ats_slug: "discord", enabled: true },
+  { company_name: "DoorDash", ats_type: "greenhouse", ats_slug: "doordashusa", enabled: true },
+  { company_name: "Drata", ats_type: "ashby", ats_slug: "drata", enabled: true },
+  { company_name: "Dropbox", ats_type: "greenhouse", ats_slug: "dropbox", enabled: true },
+  { company_name: "Elastic", ats_type: "greenhouse", ats_slug: "elastic", enabled: true },
+  { company_name: "ElevenLabs", ats_type: "ashby", ats_slug: "elevenlabs", enabled: true },
+  { company_name: "Faire", ats_type: "greenhouse", ats_slug: "faire", enabled: true },
+  { company_name: "Fastly", ats_type: "greenhouse", ats_slug: "fastly", enabled: true },
+  { company_name: "Figma", ats_type: "greenhouse", ats_slug: "figma", enabled: true },
+  { company_name: "Fivetran", ats_type: "greenhouse", ats_slug: "fivetran", enabled: true },
+  { company_name: "Flexport", ats_type: "greenhouse", ats_slug: "flexport", enabled: true },
+  { company_name: "Gemini", ats_type: "greenhouse", ats_slug: "gemini", enabled: true },
+  { company_name: "GitLab", ats_type: "greenhouse", ats_slug: "gitlab", enabled: true },
+  { company_name: "Glean", ats_type: "greenhouse", ats_slug: "gleanwork", enabled: true },
+  { company_name: "Gong", ats_type: "greenhouse", ats_slug: "gongio", enabled: true },
+  { company_name: "Grafana Labs", ats_type: "greenhouse", ats_slug: "grafanalabs", enabled: true },
+  { company_name: "Greenhouse", ats_type: "greenhouse", ats_slug: "greenhouse", enabled: true },
+  { company_name: "Gusto", ats_type: "greenhouse", ats_slug: "gusto", enabled: true },
+  { company_name: "Harvey", ats_type: "ashby", ats_slug: "harvey", enabled: true },
+  { company_name: "Hightouch", ats_type: "ashby", ats_slug: "hightouch", enabled: true },
+  { company_name: "Instacart", ats_type: "greenhouse", ats_slug: "instacart", enabled: true },
+  { company_name: "Intercom", ats_type: "greenhouse", ats_slug: "intercom", enabled: true },
+  { company_name: "Knock", ats_type: "ashby", ats_slug: "knock", enabled: true },
+  { company_name: "LangChain", ats_type: "ashby", ats_slug: "langchain", enabled: true },
+  { company_name: "LaunchDarkly", ats_type: "greenhouse", ats_slug: "launchdarkly", enabled: true },
+  { company_name: "Linear", ats_type: "ashby", ats_slug: "linear", enabled: true },
+  { company_name: "Lithic", ats_type: "greenhouse", ats_slug: "lithic", enabled: true },
+  { company_name: "Lyft", ats_type: "greenhouse", ats_slug: "lyft", enabled: true },
+  { company_name: "Marqeta", ats_type: "greenhouse", ats_slug: "marqeta", enabled: true },
+  { company_name: "Mercor", ats_type: "ashby", ats_slug: "mercor", enabled: true },
+  { company_name: "Mercury", ats_type: "greenhouse", ats_slug: "mercury", enabled: true },
+  { company_name: "Modern Treasury", ats_type: "ashby", ats_slug: "moderntreasury", enabled: true },
+  { company_name: "MongoDB", ats_type: "greenhouse", ats_slug: "mongodb", enabled: true },
+  { company_name: "Monzo", ats_type: "greenhouse", ats_slug: "monzo", enabled: true },
+  { company_name: "Mozilla", ats_type: "greenhouse", ats_slug: "mozilla", enabled: true },
+  { company_name: "Netlify", ats_type: "greenhouse", ats_slug: "netlify", enabled: true },
+  { company_name: "Notable", ats_type: "ashby", ats_slug: "notable", enabled: true },
+  { company_name: "Notion", ats_type: "ashby", ats_slug: "notion", enabled: true },
+  { company_name: "Nuro", ats_type: "greenhouse", ats_slug: "nuro", enabled: true },
+  { company_name: "OpenAI", ats_type: "ashby", ats_slug: "openai", enabled: true },
+  { company_name: "Palantir", ats_type: "lever", ats_slug: "palantir", enabled: true },
+  { company_name: "Perplexity", ats_type: "ashby", ats_slug: "perplexity", enabled: true },
+  { company_name: "Pilot", ats_type: "greenhouse", ats_slug: "pilothq", enabled: true },
+  { company_name: "Pinterest", ats_type: "greenhouse", ats_slug: "pinterest", enabled: true },
+  { company_name: "Plaid", ats_type: "ashby", ats_slug: "plaid", enabled: true },
+  { company_name: "PlanetScale", ats_type: "greenhouse", ats_slug: "planetscale", enabled: true },
+  { company_name: "Postman", ats_type: "greenhouse", ats_slug: "postman", enabled: true },
+  { company_name: "Prefect", ats_type: "ashby", ats_slug: "prefect", enabled: true },
+  { company_name: "Railway", ats_type: "ashby", ats_slug: "railway", enabled: true },
+  { company_name: "Ramp", ats_type: "ashby", ats_slug: "ramp", enabled: true },
+  { company_name: "Reddit", ats_type: "greenhouse", ats_slug: "reddit", enabled: true },
+  { company_name: "Render", ats_type: "ashby", ats_slug: "render", enabled: true },
+  { company_name: "Replit", ats_type: "ashby", ats_slug: "replit", enabled: true },
+  { company_name: "Resend", ats_type: "ashby", ats_slug: "resend", enabled: true },
+  { company_name: "Ro", ats_type: "lever", ats_slug: "ro", enabled: true },
+  { company_name: "Robinhood", ats_type: "greenhouse", ats_slug: "robinhood", enabled: true },
+  { company_name: "Roblox", ats_type: "greenhouse", ats_slug: "roblox", enabled: true },
+  { company_name: "Samsara", ats_type: "greenhouse", ats_slug: "samsara", enabled: true },
+  { company_name: "Sardine", ats_type: "ashby", ats_slug: "sardine", enabled: true },
+  { company_name: "Scale AI", ats_type: "greenhouse", ats_slug: "scaleai", enabled: true },
+  { company_name: "Sierra", ats_type: "ashby", ats_slug: "sierra", enabled: true },
+  { company_name: "Sigma Computing", ats_type: "greenhouse", ats_slug: "sigmacomputing", enabled: true },
+  { company_name: "Sourcegraph", ats_type: "greenhouse", ats_slug: "sourcegraph91", enabled: true },
+  { company_name: "Spotify", ats_type: "lever", ats_slug: "spotify", enabled: true },
+  { company_name: "Squarespace", ats_type: "greenhouse", ats_slug: "squarespace", enabled: true },
+  { company_name: "Starburst", ats_type: "greenhouse", ats_slug: "starburst", enabled: true },
+  { company_name: "Statsig", ats_type: "ashby", ats_slug: "statsig", enabled: true },
+  { company_name: "Stripe", ats_type: "greenhouse", ats_slug: "stripe", enabled: true },
+  { company_name: "Suno", ats_type: "ashby", ats_slug: "suno", enabled: true },
+  { company_name: "Supabase", ats_type: "ashby", ats_slug: "supabase", enabled: true },
+  { company_name: "Temporal", ats_type: "ashby", ats_slug: "temporal", enabled: true },
+  { company_name: "Together AI", ats_type: "greenhouse", ats_slug: "togetherai", enabled: true },
+  { company_name: "Twilio", ats_type: "greenhouse", ats_slug: "twilio", enabled: true },
+  { company_name: "Twitch", ats_type: "greenhouse", ats_slug: "twitch", enabled: true },
+  { company_name: "Typeform", ats_type: "greenhouse", ats_slug: "typeform", enabled: true },
+  { company_name: "Unit", ats_type: "ashby", ats_slug: "unit", enabled: true },
+  { company_name: "Unity", ats_type: "greenhouse", ats_slug: "unity3d", enabled: true },
+  { company_name: "Vanta", ats_type: "ashby", ats_slug: "vanta", enabled: true },
+  { company_name: "Veeva", ats_type: "lever", ats_slug: "veeva", enabled: true },
+  { company_name: "Vercel", ats_type: "greenhouse", ats_slug: "vercel", enabled: true },
+  { company_name: "Verkada", ats_type: "greenhouse", ats_slug: "verkada", enabled: true },
+  { company_name: "Warp", ats_type: "ashby", ats_slug: "warp", enabled: true },
+  { company_name: "Watershed", ats_type: "greenhouse", ats_slug: "watershed", enabled: true },
+  { company_name: "Weaviate", ats_type: "ashby", ats_slug: "weaviate", enabled: true },
+  { company_name: "Webflow", ats_type: "greenhouse", ats_slug: "webflow", enabled: true },
+  { company_name: "Wiz", ats_type: "greenhouse", ats_slug: "wizinc", enabled: true },
+  { company_name: "WorkOS", ats_type: "ashby", ats_slug: "workos", enabled: true },
+  { company_name: "Writer", ats_type: "ashby", ats_slug: "writer", enabled: true },
+  { company_name: "Zip", ats_type: "ashby", ats_slug: "zip", enabled: true },
 ];
+
+/** All sources a scan should fetch from. */
+export function enabledSources(): AtsSource[] {
+  return SOURCES.filter((s) => s.enabled);
+}

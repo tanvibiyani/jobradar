@@ -12,6 +12,9 @@ import type { AtsSource, DiscoveredJob } from "./types";
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_BYTES = 12 * 1024 * 1024; // generous; the largest boards run ~2–3MB
 const MAX_DESCRIPTION_CHARS = 4_000; // cap stored text; full text is used in-memory for scoring
+// Scan limit: cap how many postings a single source contributes so one giant
+// board (some return 700–2000 jobs) can't dominate a scan's memory or storage.
+const MAX_JOBS_PER_SOURCE = 250;
 const UA =
   "Mozilla/5.0 (compatible; JobRadar/1.0; +https://github.com/tanvibiyani/jobradar)";
 
@@ -89,7 +92,7 @@ type GhJob = {
 async function fetchGreenhouse(src: AtsSource): Promise<DiscoveredJob[]> {
   const data = (await getJson(
     `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(
-      src.token,
+      src.ats_slug,
     )}/jobs?content=true`,
   )) as { jobs?: GhJob[] };
 
@@ -99,7 +102,7 @@ async function fetchGreenhouse(src: AtsSource): Promise<DiscoveredJob[]> {
     if (!j.title || !j.absolute_url) continue;
     const location = j.location?.name?.trim() || null;
     out.push({
-      company_name: src.company,
+      company_name: src.company_name,
       title: j.title.trim(),
       url: j.absolute_url,
       location,
@@ -127,7 +130,7 @@ type LeverJob = {
 
 async function fetchLever(src: AtsSource): Promise<DiscoveredJob[]> {
   const data = (await getJson(
-    `https://api.lever.co/v0/postings/${encodeURIComponent(src.token)}?mode=json`,
+    `https://api.lever.co/v0/postings/${encodeURIComponent(src.ats_slug)}?mode=json`,
   )) as LeverJob[];
 
   const jobs = Array.isArray(data) ? data : [];
@@ -140,7 +143,7 @@ async function fetchLever(src: AtsSource): Promise<DiscoveredJob[]> {
       j.categories?.allLocations?.[0]?.trim() ||
       null;
     out.push({
-      company_name: src.company,
+      company_name: src.company_name,
       title: j.text.trim(),
       url,
       location,
@@ -175,7 +178,7 @@ type AshbyJob = {
 async function fetchAshby(src: AtsSource): Promise<DiscoveredJob[]> {
   const data = (await getJson(
     `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(
-      src.token,
+      src.ats_slug,
     )}`,
   )) as { jobs?: AshbyJob[] };
 
@@ -187,7 +190,7 @@ async function fetchAshby(src: AtsSource): Promise<DiscoveredJob[]> {
     if (j.isListed === false) continue; // unlisted postings aren't public
     const location = j.location?.trim() || null;
     out.push({
-      company_name: src.company,
+      company_name: src.company_name,
       title: j.title.trim(),
       url,
       location,
@@ -204,13 +207,20 @@ async function fetchAshby(src: AtsSource): Promise<DiscoveredJob[]> {
 }
 
 /** Fetch and normalize one source's postings. Throws on network/parse errors. */
-export function fetchSource(src: AtsSource): Promise<DiscoveredJob[]> {
-  switch (src.provider) {
+export async function fetchSource(src: AtsSource): Promise<DiscoveredJob[]> {
+  let jobs: DiscoveredJob[];
+  switch (src.ats_type) {
     case "greenhouse":
-      return fetchGreenhouse(src);
+      jobs = await fetchGreenhouse(src);
+      break;
     case "lever":
-      return fetchLever(src);
+      jobs = await fetchLever(src);
+      break;
     case "ashby":
-      return fetchAshby(src);
+      jobs = await fetchAshby(src);
+      break;
   }
+  return jobs.length > MAX_JOBS_PER_SOURCE
+    ? jobs.slice(0, MAX_JOBS_PER_SOURCE)
+    : jobs;
 }
