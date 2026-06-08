@@ -206,3 +206,46 @@ export async function runJobScan(
       (typeof top === "number" ? ` · best match ${top}%` : ""),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Dismiss / restore
+//
+// "Dismissing" a job flags its job_matches row as rejected so the Jobs page can
+// hide it. The upsert (conflict on user_id, job_id) only touches `status`, so a
+// job's score/reasons survive — and it works even for jobs that were never
+// scored (it inserts a status-only match row).
+// ---------------------------------------------------------------------------
+
+async function setJobStatus(
+  formData: FormData,
+  status: "rejected" | "new",
+): Promise<void> {
+  const jobId = String(formData.get("id") ?? "").trim();
+  if (!jobId) return;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const pinned = await pinSession(supabase);
+  if (!pinned.ok) return;
+
+  await supabase
+    .from("job_matches")
+    .upsert(
+      { user_id: user.id, job_id: jobId, status },
+      { onConflict: "user_id,job_id" },
+    );
+
+  revalidatePath("/jobs");
+}
+
+export async function dismissJob(formData: FormData): Promise<void> {
+  await setJobStatus(formData, "rejected");
+}
+
+export async function restoreJob(formData: FormData): Promise<void> {
+  await setJobStatus(formData, "new");
+}
