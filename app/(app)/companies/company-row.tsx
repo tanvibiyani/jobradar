@@ -5,6 +5,7 @@ import { useFormStatus } from "react-dom";
 import {
   updateCompany,
   deleteCompany,
+  fetchJobs,
   type SaveState,
 } from "./actions";
 
@@ -48,6 +49,22 @@ function SaveButton() {
   );
 }
 
+function FetchButton({ disabled }: { disabled: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={disabled || pending}
+      title={
+        disabled ? "Add a career page URL first" : "Scrape the careers page"
+      }
+      className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-300 px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+    >
+      {pending ? "Fetching…" : "Fetch Jobs"}
+    </button>
+  );
+}
+
 function DeleteButton({ name }: { name: string }) {
   const { pending } = useFormStatus();
   return (
@@ -72,6 +89,11 @@ export function CompanyRow({ company }: { company: Company }) {
     updateCompany,
     null,
   );
+  const [fetchState, fetchAction] = useActionState<SaveState, FormData>(
+    fetchJobs,
+    null,
+  );
+  const hasCareers = Boolean(company.careers_url);
 
   // Collapse back to display mode once a save succeeds.
   useEffect(() => {
@@ -152,36 +174,58 @@ export function CompanyRow({ company }: { company: Company }) {
   }
 
   return (
-    <tr>
-      <td className="px-4 py-3 font-medium">{company.name}</td>
-      <td className="px-4 py-3">
-        <LinkCell url={company.website} label="Website" />
-      </td>
-      <td className="px-4 py-3">
-        <LinkCell url={company.careers_url} label="Careers" />
-      </td>
-      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-        {company.notes ? (
-          <span className="line-clamp-2">{company.notes}</span>
-        ) : (
-          <span className="text-zinc-400">—</span>
-        )}
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-300 px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-          >
-            Edit
-          </button>
-          <form action={deleteCompany}>
-            <input type="hidden" name="id" value={company.id} />
-            <DeleteButton name={company.name} />
-          </form>
-        </div>
-      </td>
-    </tr>
+    <>
+      <tr>
+        <td className="px-4 py-3 font-medium">{company.name}</td>
+        <td className="px-4 py-3">
+          <LinkCell url={company.website} label="Website" />
+        </td>
+        <td className="px-4 py-3">
+          <LinkCell url={company.careers_url} label="Careers" />
+        </td>
+        <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+          {company.notes ? (
+            <span className="line-clamp-2">{company.notes}</span>
+          ) : (
+            <span className="text-zinc-400">—</span>
+          )}
+        </td>
+        <td className="px-4 py-3">
+          <div className="flex items-center justify-end gap-2">
+            <form action={fetchAction}>
+              <input type="hidden" name="id" value={company.id} />
+              <FetchButton disabled={!hasCareers} />
+            </form>
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="inline-flex h-8 items-center justify-center rounded-md border border-zinc-300 px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            >
+              Edit
+            </button>
+            <form action={deleteCompany}>
+              <input type="hidden" name="id" value={company.id} />
+              <DeleteButton name={company.name} />
+            </form>
+          </div>
+        </td>
+      </tr>
+
+      {fetchState ? (
+        <tr>
+          <td colSpan={5} className="px-4 pb-3">
+            {"error" in fetchState ? (
+              <span role="alert" className="text-xs text-red-700 dark:text-red-400">
+                {fetchState.error}
+              </span>
+            ) : (
+              <span role="status" className="text-xs text-green-700 dark:text-green-400">
+                {fetchState.message}
+              </span>
+            )}
+          </td>
+        </tr>
+      ) : null}
+    </>
   );
 }

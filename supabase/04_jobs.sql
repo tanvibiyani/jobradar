@@ -45,6 +45,12 @@ create index if not exists jobs_company_id_idx  on public.jobs (company_id);
 create index if not exists jobs_user_posted_idx
   on public.jobs (user_id, posted_at desc nulls last);
 
+-- Deduplicate scraped jobs by URL, per user. Backs the `on conflict
+-- (user_id, url)` upsert in the "Fetch Jobs" flow. NULL urls are treated as
+-- distinct by Postgres, so manually-added jobs without a url never collide.
+create unique index if not exists jobs_user_url_uniq
+  on public.jobs (user_id, url);
+
 drop trigger if exists set_jobs_updated_at on public.jobs;
 create trigger set_jobs_updated_at
   before update on public.jobs
