@@ -69,3 +69,13 @@ drop policy if exists "companies delete own" on public.companies;
 create policy "companies delete own" on public.companies
   for delete to authenticated
   using (user_id = (select auth.uid()));
+
+-- ---------------------------------------------------------------------------
+-- Grants
+--
+-- The `authenticated` role needs base SQL privileges before RLS is consulted.
+-- Without these, Postgres returns "permission denied for table companies"
+-- before the policy is even evaluated. grant is idempotent.
+-- ---------------------------------------------------------------------------
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.companies to authenticated;
