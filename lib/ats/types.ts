@@ -1,0 +1,56 @@
+// Shared types for automated job discovery across public ATS feeds.
+
+/** The three public ATS APIs we know how to read. */
+export type AtsProvider = "greenhouse" | "lever" | "ashby";
+
+/**
+ * A company we know how to discover jobs for, seeded directly in code.
+ * `token` is the board identifier in that ATS's public API (e.g. the
+ * greenhouse board name, the lever account, or the ashby job-board name).
+ */
+export type AtsSource = {
+  company: string;
+  provider: AtsProvider;
+  token: string;
+};
+
+/**
+ * A job posting after we've normalized it out of a provider-specific payload.
+ * This is the shape the scanner filters, scores, and stores. `user_id` and
+ * `discovered_at` are added at storage time (the latter via a DB default), so
+ * they aren't part of the fetched shape.
+ */
+export type DiscoveredJob = {
+  company_name: string;
+  title: string;
+  url: string;
+  location: string | null;
+  description: string | null;
+  source: string; // human-readable provider label, e.g. "Greenhouse"
+  /** Best-effort remote flag derived from the feed; used for filtering/scoring. */
+  remote: boolean;
+  /** When the posting went live, when the feed exposes it. */
+  posted_at: string | null;
+};
+
+/** A user's saved search preferences, already normalized to arrays. */
+export type Preferences = {
+  roles: string[];
+  locations: string[];
+  keywords: string[];
+  min_salary: number | null;
+  remote: boolean;
+};
+
+/** Output of scoring a single job against a user's preferences + resume. */
+export type MatchResult = {
+  /** 0–100, rounded. Null when there's nothing to score against. */
+  score: number | null;
+  reasons: {
+    title: number;
+    keywords: number;
+    resume: number;
+    location: number;
+    notes: string[];
+  };
+};

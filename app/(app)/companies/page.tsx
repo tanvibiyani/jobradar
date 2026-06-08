@@ -18,10 +18,17 @@ export default async function CompaniesPage() {
   return (
     <main className="mx-auto max-w-5xl px-6 py-12 font-sans">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Companies</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Target Companies
+        </h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Track companies you&apos;re interested in, along with their careers
-          pages and your own notes.
+          Optional. JobRadar already discovers jobs across public job boards
+          from the{" "}
+          <a href="/jobs" className="text-blue-600 hover:underline dark:text-blue-400">
+            Jobs
+          </a>{" "}
+          page — add companies here only to track specific ones, with their
+          careers pages and your own notes.
         </p>
       </header>
 
