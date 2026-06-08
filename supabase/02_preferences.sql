@@ -65,3 +65,13 @@ drop policy if exists "preferences delete own" on public.preferences;
 create policy "preferences delete own" on public.preferences
   for delete to authenticated
   using (user_id = (select auth.uid()));
+
+-- ---------------------------------------------------------------------------
+-- Grants
+--
+-- The `authenticated` role needs base SQL privileges before RLS is consulted.
+-- Without these, Postgres returns "permission denied for table preferences"
+-- before the policy is even evaluated. grant is idempotent.
+-- ---------------------------------------------------------------------------
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.preferences to authenticated;
