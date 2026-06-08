@@ -24,6 +24,7 @@ create table if not exists public.jobs (
   company_id   uuid references public.companies (id) on delete set null,
   title        text not null,
   url          text,
+  source       text,
   location     text,
   description  text,
   posted_at    timestamptz,
@@ -33,6 +34,11 @@ create table if not exists public.jobs (
 
 alter table public.jobs
   add column if not exists updated_at timestamptz not null default now();
+
+-- `source` records where the posting came from (e.g. "LinkedIn", "Greenhouse").
+-- Added after the initial schema, so guard it for existing databases.
+alter table public.jobs
+  add column if not exists source text;
 
 create index if not exists jobs_user_id_idx     on public.jobs (user_id);
 create index if not exists jobs_company_id_idx  on public.jobs (company_id);
@@ -71,3 +77,13 @@ drop policy if exists "jobs delete own" on public.jobs;
 create policy "jobs delete own" on public.jobs
   for delete to authenticated
   using (user_id = (select auth.uid()));
+
+-- ---------------------------------------------------------------------------
+-- Grants
+--
+-- The `authenticated` role needs base SQL privileges before RLS is consulted.
+-- Without these, Postgres returns "permission denied for table jobs"
+-- before the policy is even evaluated. grant is idempotent.
+-- ---------------------------------------------------------------------------
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.jobs to authenticated;
