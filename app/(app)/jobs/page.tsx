@@ -6,6 +6,7 @@ import { dismissJob, restoreJob } from "./actions";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_MIN = 50; // hide jobs below this match score unless asked otherwise
+const PAGE_SIZE = 25; // jobs listed per page; keeps each render bounded
 
 type JobMatch = {
   score: number | null;
@@ -134,6 +135,8 @@ export default async function JobsPage({
   const sort = first(sp.sort) === "newest" ? "newest" : "match";
   const hideDismissed = isSubmitted ? first(sp.hide_dismissed) === "1" : true;
   const includeBelow50 = first(sp.below50) === "1";
+  const pageRaw = Number.parseInt(first(sp.page), 10);
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
 
   // Hide below 50% by default; the floor drops to 0 when the user opts in.
   const floor = includeBelow50 ? 0 : DEFAULT_MIN;
@@ -179,11 +182,29 @@ export default async function JobsPage({
     ),
   ].sort((a, b) => a.localeCompare(b));
 
-  // --- Build the filtered, sorted query. -----------------------------------
+  // When hiding dismissed jobs, exclude them in the DATABASE (not after fetch)
+  // so pagination and totals stay correct. Dismissed jobs are typically few, so
+  // a lightweight id lookup (indexed by user_id+status) is cheap.
+  let rejectedIds: string[] = [];
+  if (hideDismissed) {
+    const { data: rejectedRows } = await supabase
+      .from("job_matches")
+      .select("job_id")
+      .eq("status", "rejected");
+    rejectedIds = (rejectedRows ?? []).map(
+      (r) => (r as { job_id: string }).job_id,
+    );
+  }
+
+  // --- Build the filtered, sorted, paginated query. ------------------------
+  // `count: "exact"` returns the total matching rows so we can show page X of Y
+  // while `.range()` only transfers the current page (≤ PAGE_SIZE rows). The
+  // heavy match arrays are therefore loaded for at most PAGE_SIZE jobs.
   let query = supabase
     .from("jobs")
     .select(
       "id,title,company_name,location,source,apply_url:url,match_score,discovered_at,created_at,companies(name),job_matches(score,status,best_resume_title,matched_keywords,matched_phrases,missing_keywords,resume_tweaks)",
+      { count: "exact" },
     );
 
   if (effectiveMin > 0) query = query.gte("match_score", effectiveMin);
@@ -191,6 +212,9 @@ export default async function JobsPage({
   if (source) query = query.eq("source", source);
   if (location) query = query.ilike("location", `%${location}%`);
   if (q) query = query.ilike("title", `%${q}%`);
+  if (rejectedIds.length > 0) {
+    query = query.not("id", "in", `(${rejectedIds.join(",")})`);
+  }
 
   if (sort === "newest") {
     query = query
@@ -203,12 +227,35 @@ export default async function JobsPage({
       .order("created_at", { ascending: false });
   }
 
-  const { data, error } = await query;
-  let jobs = (data ?? []) as unknown as JobRow[];
+  const from = (page - 1) * PAGE_SIZE;
+  query = query.range(from, from + PAGE_SIZE - 1);
 
-  if (hideDismissed) {
-    jobs = jobs.filter((j) => j.job_matches?.[0]?.status !== "rejected");
+  const { data, error, count } = await query;
+  const jobs = (data ?? []) as unknown as JobRow[];
+  const total = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const firstShown = jobs.length === 0 ? 0 : from + 1;
+  const lastShown = jobs.length === 0 ? 0 : from + jobs.length;
+
+  // Preserve the active filters when moving between pages.
+  const pageParams = new URLSearchParams();
+  if (isSubmitted) {
+    pageParams.set("filtered", "1");
+    pageParams.set("hide_dismissed", hideDismissed ? "1" : "0");
   }
+  if (minRaw) pageParams.set("min", minRaw);
+  if (company) pageParams.set("company", company);
+  if (source) pageParams.set("source", source);
+  if (values.location) pageParams.set("location", values.location);
+  if (values.q) pageParams.set("q", values.q);
+  if (sort !== "match") pageParams.set("sort", sort);
+  if (includeBelow50) pageParams.set("below50", "1");
+  const hrefForPage = (p: number) => {
+    const params = new URLSearchParams(pageParams);
+    if (p > 1) params.set("page", String(p));
+    const qs = params.toString();
+    return qs ? `/jobs?${qs}` : "/jobs";
+  };
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12 font-sans">
@@ -243,7 +290,7 @@ export default async function JobsPage({
       ) : null}
 
       <section className="mt-8 space-y-3">
-        {jobs.length === 0 ? (
+        {total === 0 ? (
           filtersActive || !includeBelow50 ? (
             <p className="rounded-md border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
               No jobs at this match level. Upload a{" "}
@@ -268,7 +315,8 @@ export default async function JobsPage({
         ) : (
           <>
             <p className="text-xs text-zinc-500">
-              {jobs.length} job{jobs.length === 1 ? "" : "s"}
+              Showing {firstShown.toLocaleString()}–{lastShown.toLocaleString()}{" "}
+              of {total.toLocaleString()} job{total === 1 ? "" : "s"}
               {!includeBelow50 ? " · matches ≥ 50%" : ""}
             </p>
 
@@ -414,6 +462,45 @@ export default async function JobsPage({
                 </article>
               );
             })}
+
+            {totalPages > 1 ? (
+              <nav
+                aria-label="Pagination"
+                className="flex items-center justify-between gap-3 pt-2"
+              >
+                {page > 1 ? (
+                  <a
+                    href={hrefForPage(page - 1)}
+                    rel="prev"
+                    className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  >
+                    ← Previous
+                  </a>
+                ) : (
+                  <span className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-300 dark:border-zinc-800 dark:text-zinc-700">
+                    ← Previous
+                  </span>
+                )}
+
+                <span className="text-xs text-zinc-500">
+                  Page {page.toLocaleString()} of {totalPages.toLocaleString()}
+                </span>
+
+                {page < totalPages ? (
+                  <a
+                    href={hrefForPage(page + 1)}
+                    rel="next"
+                    className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  >
+                    Next →
+                  </a>
+                ) : (
+                  <span className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-300 dark:border-zinc-800 dark:text-zinc-700">
+                    Next →
+                  </span>
+                )}
+              </nav>
+            ) : null}
           </>
         )}
       </section>
