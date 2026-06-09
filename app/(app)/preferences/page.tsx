@@ -9,6 +9,7 @@ type PreferencesRow = {
   keywords: string[] | null;
   min_salary: number | null;
   remote: boolean | null;
+  years_of_experience: number | null;
 };
 
 const EMPTY: PreferencesDefaults = {
@@ -17,6 +18,7 @@ const EMPTY: PreferencesDefaults = {
   keywords: [],
   min_salary: null,
   remote: false,
+  years_of_experience: null,
 };
 
 export default async function PreferencesPage() {
@@ -26,7 +28,7 @@ export default async function PreferencesPage() {
   // so `.maybeSingle()` returns their preferences or null if not yet set.
   const { data, error } = await supabase
     .from("preferences")
-    .select("roles,locations,keywords,min_salary,remote")
+    .select("roles,locations,keywords,min_salary,remote,years_of_experience")
     .maybeSingle<PreferencesRow>();
 
   const defaults: PreferencesDefaults = data
@@ -36,6 +38,7 @@ export default async function PreferencesPage() {
         keywords: data.keywords ?? [],
         min_salary: data.min_salary,
         remote: data.remote ?? false,
+        years_of_experience: data.years_of_experience,
       }
     : EMPTY;
 

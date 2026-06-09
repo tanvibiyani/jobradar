@@ -10,6 +10,7 @@ export type PreferencesDefaults = {
   keywords: string[];
   min_salary: number | null;
   remote: boolean;
+  years_of_experience: number | null;
 };
 
 function SubmitButton() {
@@ -80,6 +81,32 @@ export function PreferencesForm({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 sm:items-start">
+        <div>
+          <label
+            htmlFor="years_of_experience"
+            className="block text-sm font-medium"
+          >
+            Years of experience
+          </label>
+          <input
+            id="years_of_experience"
+            name="years_of_experience"
+            type="number"
+            min={0}
+            max={60}
+            step={1}
+            inputMode="numeric"
+            defaultValue={defaults.years_of_experience ?? ""}
+            placeholder="e.g. 6"
+            className={inputClass}
+          />
+          <p className="mt-1 text-xs text-zinc-500">
+            Used to score how well each role&apos;s experience requirement fits
+            you. Leave blank to skip experience scoring (scores are then capped
+            at 85%).
+          </p>
+        </div>
+
         <div>
           <label htmlFor="min_salary" className="block text-sm font-medium">
             Minimum salary

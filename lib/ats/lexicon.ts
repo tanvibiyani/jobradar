@@ -159,3 +159,37 @@ export const KNOWN_PHRASES: string[] = [
   "supply chain", "process improvement", "change management",
   "people management", "team leadership", "technical leadership",
 ];
+
+/**
+ * Action verbs that typically begin a responsibility/duty clause in a JD
+ * ("Build …", "Partner with …", "Drive …"). Used to extract verb-led
+ * responsibility phrases. Stored as base forms; the matcher de-suffixes
+ * -s/-ing/-ed (and the dropped-e variants) before checking membership, so
+ * "managing"/"manages"/"managed" all resolve to "manage".
+ */
+export const ACTION_VERBS = new Set<string>([
+  "build", "develop", "design", "lead", "manage", "drive", "own", "partner",
+  "collaborate", "create", "deliver", "define", "implement", "maintain",
+  "optimize", "analyze", "architect", "scale", "launch", "support",
+  "coordinate", "oversee", "establish", "improve", "execute", "mentor", "grow",
+  "identify", "evaluate", "monitor", "conduct", "produce", "present",
+  "negotiate", "forecast", "plan", "prioritize", "ship", "operate", "automate",
+  "integrate", "research", "run", "guide", "shape", "spearhead", "champion",
+  "enable", "streamline", "standardize", "document", "troubleshoot", "debug",
+  "deploy", "test", "validate", "measure", "track", "report", "communicate",
+  "influence", "align", "facilitate", "translate", "model", "source",
+  "recruit", "hire", "train", "coach", "review", "lead", "manage", "scope",
+  "construct", "engineer", "deliver", "configure", "administer", "provision",
+]);
+
+/**
+ * Pure seniority/level modifiers stripped from a JD title to leave the role
+ * noun(s) (so "Senior Product Manager" → "product manager"). Note these are
+ * intentionally separate from GENERIC_WORDS: role nouns like "manager" /
+ * "director" are kept here because the resume should match the role itself.
+ */
+export const SENIORITY_WORDS = new Set<string>([
+  "senior", "sr", "junior", "jr", "staff", "principal", "lead", "mid",
+  "midlevel", "entry", "associate", "intern", "fellow", "ii", "iii", "iv",
+  "level", "grade", "tier", "i",
+]);

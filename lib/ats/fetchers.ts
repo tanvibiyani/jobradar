@@ -9,7 +9,7 @@ import type { AtsSource, DiscoveredJob } from "./types";
 // hosted career pages.
 // ---------------------------------------------------------------------------
 
-const FETCH_TIMEOUT_MS = 15_000;
+const FETCH_TIMEOUT_MS = 10_000; // per-source HTTP timeout (matches the scan's per-source bound)
 const MAX_BYTES = 12 * 1024 * 1024; // generous; the largest boards run ~2–3MB
 const MAX_DESCRIPTION_CHARS = 4_000; // cap stored text; full text is used in-memory for scoring
 // Scan limit: cap how many postings a single source contributes so one giant

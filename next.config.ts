@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 
 const nextConfig: NextConfig = {
+  // A stray /home/ubuntu/package-lock.json makes Next infer the home dir as the
+  // workspace root, which spams the logs and mis-traces output files. Pin the
+  // tracing root to this project.
+  outputFileTracingRoot: path.join(__dirname),
   // pdf-parse pulls in pdfjs-dist, which ships its own worker bundles and
   // dynamic imports that don't survive the server-component bundler. Loading
   // it through Node's require keeps everything intact.

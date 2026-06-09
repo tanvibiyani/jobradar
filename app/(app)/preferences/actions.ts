@@ -63,6 +63,21 @@ function parseMinSalary(value: string): number | null | { error: string } {
   return Math.round(n);
 }
 
+/** Years of experience: a whole number 0–60, or null when left blank. */
+function parseYearsOfExperience(
+  value: string,
+): number | null | { error: string } {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed.replace(/[,_\s]/g, ""));
+  if (!Number.isInteger(n) || n < 0 || n > 60) {
+    return {
+      error: "Years of experience must be a whole number between 0 and 60.",
+    };
+  }
+  return n;
+}
+
 export async function savePreferences(
   _prev: SaveState,
   formData: FormData,
@@ -75,6 +90,13 @@ export async function savePreferences(
   const salary = parseMinSalary(String(formData.get("min_salary") ?? ""));
   if (salary !== null && typeof salary === "object") {
     return { error: salary.error };
+  }
+
+  const years = parseYearsOfExperience(
+    String(formData.get("years_of_experience") ?? ""),
+  );
+  if (years !== null && typeof years === "object") {
+    return { error: years.error };
   }
 
   const supabase = await createClient();
@@ -98,6 +120,7 @@ export async function savePreferences(
       keywords,
       min_salary: salary,
       remote,
+      years_of_experience: years,
     },
     { onConflict: "user_id" },
   );

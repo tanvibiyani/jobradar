@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { RunScan } from "./scan-button";
 import { JobFilters, type JobFilterValues } from "./filters";
 import { dismissJob, restoreJob } from "./actions";
+import { SCAN_RUN_COLUMNS, type ScanRun } from "./scan-types";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +15,55 @@ type JobMatch = {
   best_resume_title: string | null;
   matched_keywords: string[] | null;
   matched_phrases: string[] | null;
+  matched_responsibilities: string[] | null;
   missing_keywords: string[] | null;
+  missing_phrases: string[] | null;
+  experience_requirement: string | null;
+  experience_alignment_reason: string | null;
+  match_reason: string | null;
   resume_tweaks: string[] | null;
 };
+
+// Fit buckets. Order matters — jobs render grouped in this order. Below 50% is
+// hidden by default (shown only when the "below 50%" toggle is on).
+const BUCKETS = [
+  {
+    key: "strong",
+    label: "Strong Fit",
+    sub: "90%+",
+    min: 90,
+    headerClass: "text-emerald-700 dark:text-emerald-400",
+  },
+  {
+    key: "good",
+    label: "Good Fit",
+    sub: "75–89%",
+    min: 75,
+    headerClass: "text-green-700 dark:text-green-400",
+  },
+  {
+    key: "possible",
+    label: "Possible Fit",
+    sub: "50–74%",
+    min: 50,
+    headerClass: "text-amber-700 dark:text-amber-400",
+  },
+  {
+    key: "below",
+    label: "Below 50%",
+    sub: "shown because the toggle is on",
+    min: 0,
+    headerClass: "text-zinc-500",
+  },
+] as const;
+
+function bucketFor(score: number | null): (typeof BUCKETS)[number]["key"] {
+  const s = score ?? 0;
+  if (s >= 90) return "strong";
+  if (s >= 75) return "good";
+  if (s >= 50) return "possible";
+  return "below";
+}
 
 type JobRow = {
   id: string;
@@ -116,6 +163,193 @@ function Chips({
   );
 }
 
+function JobCard({ job }: { job: JobRow }) {
+  const m = job.job_matches?.[0] ?? null;
+  const company = job.company_name ?? job.companies?.name ?? null;
+  const matchedPhrases = m?.matched_phrases ?? [];
+  const matchedKeywords = m?.matched_keywords ?? [];
+  const matchedResponsibilities = m?.matched_responsibilities ?? [];
+  const missingKeywords = m?.missing_keywords ?? [];
+  const missingPhrases = m?.missing_phrases ?? [];
+  const tweaks = m?.resume_tweaks ?? [];
+  const experienceReq = m?.experience_requirement ?? null;
+  const experienceReason = m?.experience_alignment_reason ?? null;
+  const matchReason = m?.match_reason ?? null;
+  const dismissed = m?.status === "rejected";
+  const standout = (job.match_score ?? 0) >= 90;
+  const hasDetails =
+    matchedPhrases.length > 0 ||
+    matchedKeywords.length > 0 ||
+    matchedResponsibilities.length > 0 ||
+    missingKeywords.length > 0 ||
+    missingPhrases.length > 0 ||
+    tweaks.length > 0;
+
+  return (
+    <article
+      className={`rounded-lg border p-4 ${dismissed ? "opacity-60 " : ""}${
+        standout
+          ? "border-emerald-300 bg-emerald-50/40 shadow-sm dark:border-emerald-800 dark:bg-emerald-950/20"
+          : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <ScoreBadge score={job.match_score} />
+          <div className="min-w-0">
+            <h3 className="font-medium leading-tight">{job.title}</h3>
+            <p className="mt-0.5 truncate text-sm text-zinc-600 dark:text-zinc-400">
+              {[company, job.location, job.source].filter(Boolean).join(" · ") ||
+                "—"}
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          {job.apply_url ? (
+            <a
+              href={applyHref(job.apply_url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            >
+              Apply
+            </a>
+          ) : null}
+          <p className="mt-1 text-xs text-zinc-500">
+            {formatDate(job.discovered_at ?? job.created_at)}
+          </p>
+        </div>
+      </div>
+
+      {matchReason ? (
+        <p className="mt-3 text-sm text-zinc-700 dark:text-zinc-300">
+          {matchReason}
+        </p>
+      ) : null}
+
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+        {m?.best_resume_title ? (
+          <span>
+            Best resume:{" "}
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">
+              {m.best_resume_title}
+            </span>
+          </span>
+        ) : null}
+        {experienceReq ? <span>Experience asked: {experienceReq}</span> : null}
+      </div>
+
+      {experienceReason ? (
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">
+            Experience alignment:
+          </span>{" "}
+          {experienceReason}
+        </p>
+      ) : null}
+
+      {matchedPhrases.length > 0 || matchedKeywords.length > 0 ? (
+        <div className="mt-2">
+          <Chips
+            items={[...matchedPhrases, ...matchedKeywords]}
+            tone="match"
+            max={10}
+          />
+        </div>
+      ) : null}
+
+      {hasDetails ? (
+        <details className="group mt-3">
+          <summary className="cursor-pointer list-none text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+            <span className="group-open:hidden">
+              Show match details &amp; resume tweaks ▾
+            </span>
+            <span className="hidden group-open:inline">
+              Hide match details ▴
+            </span>
+          </summary>
+
+          <div className="mt-3 space-y-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+            {matchedResponsibilities.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-zinc-500">
+                  Core responsibilities your resume covers
+                </p>
+                <ul className="list-disc space-y-0.5 pl-5 text-sm text-zinc-700 dark:text-zinc-300">
+                  {matchedResponsibilities.map((r, i) => (
+                    <li key={i}>{r}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {matchedPhrases.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-zinc-500">
+                  Matched phrases
+                </p>
+                <Chips items={matchedPhrases} tone="match" />
+              </div>
+            ) : null}
+
+            {matchedKeywords.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-zinc-500">
+                  Matched ATS keywords
+                </p>
+                <Chips items={matchedKeywords} tone="match" />
+              </div>
+            ) : null}
+
+            {missingPhrases.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-zinc-500">
+                  Key phrases missing from your resume
+                </p>
+                <Chips items={missingPhrases} tone="miss" />
+              </div>
+            ) : null}
+
+            {missingKeywords.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-zinc-500">
+                  Missing ATS keywords
+                </p>
+                <Chips items={missingKeywords} tone="miss" />
+              </div>
+            ) : null}
+
+            {tweaks.length > 0 ? (
+              <div>
+                <p className="mb-1 text-xs font-medium text-zinc-500">
+                  Suggested resume tweaks
+                </p>
+                <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-700 dark:text-zinc-300">
+                  {tweaks.map((t, i) => (
+                    <li key={i}>{t}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+
+      <div className="mt-3 flex justify-end">
+        <form action={dismissed ? restoreJob : dismissJob}>
+          <input type="hidden" name="id" value={job.id} />
+          <button
+            type="submit"
+            className="text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+          >
+            {dismissed ? "Restore" : "Dismiss"}
+          </button>
+        </form>
+      </div>
+    </article>
+  );
+}
+
 export default async function JobsPage({
   searchParams,
 }: {
@@ -123,6 +357,16 @@ export default async function JobsPage({
 }) {
   const sp = await searchParams;
   const supabase = await createClient();
+
+  // Latest scan run drives the button state + background-scan polling. This is
+  // a cheap single-row read — no scanning or scoring happens on page load.
+  const { data: latestScanRow } = await supabase
+    .from("scan_runs")
+    .select(SCAN_RUN_COLUMNS)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const latestScan = (latestScanRow ?? null) as ScanRun | null;
 
   // --- Parse filter state out of the URL. ----------------------------------
   const isSubmitted = first(sp.filtered) === "1";
@@ -203,7 +447,7 @@ export default async function JobsPage({
   let query = supabase
     .from("jobs")
     .select(
-      "id,title,company_name,location,source,apply_url:url,match_score,discovered_at,created_at,companies(name),job_matches(score,status,best_resume_title,matched_keywords,matched_phrases,missing_keywords,resume_tweaks)",
+      "id,title,company_name,location,source,apply_url:url,match_score,discovered_at,created_at,companies(name),job_matches(score,status,best_resume_title,matched_keywords,matched_phrases,matched_responsibilities,missing_keywords,missing_phrases,experience_requirement,experience_alignment_reason,match_reason,resume_tweaks)",
       { count: "exact" },
     );
 
@@ -268,7 +512,7 @@ export default async function JobsPage({
       </header>
 
       <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-        <RunScan />
+        <RunScan initialScan={latestScan} />
       </section>
 
       <section className="mt-6">
@@ -320,146 +564,25 @@ export default async function JobsPage({
               {!includeBelow50 ? " · matches ≥ 50%" : ""}
             </p>
 
-            {jobs.map((j) => {
-              const m = j.job_matches?.[0] ?? null;
-              const company = j.company_name ?? j.companies?.name ?? null;
-              const matchedPhrases = m?.matched_phrases ?? [];
-              const matchedKeywords = m?.matched_keywords ?? [];
-              const missingKeywords = m?.missing_keywords ?? [];
-              const tweaks = m?.resume_tweaks ?? [];
-              const dismissed = m?.status === "rejected";
-              const standout = (j.match_score ?? 0) >= 90;
-              const hasDetails =
-                Boolean(m?.best_resume_title) ||
-                matchedPhrases.length > 0 ||
-                matchedKeywords.length > 0 ||
-                missingKeywords.length > 0 ||
-                tweaks.length > 0;
-
+            {BUCKETS.map((bucket) => {
+              const bucketJobs = jobs.filter(
+                (j) => bucketFor(j.match_score) === bucket.key,
+              );
+              if (bucketJobs.length === 0) return null;
               return (
-                <article
-                  key={j.id}
-                  className={`rounded-lg border p-4 ${
-                    dismissed ? "opacity-60 " : ""
-                  }${
-                    standout
-                      ? "border-emerald-300 bg-emerald-50/40 dark:border-emerald-800 dark:bg-emerald-950/20"
-                      : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <ScoreBadge score={j.match_score} />
-                      <div className="min-w-0">
-                        <h3 className="font-medium leading-tight">{j.title}</h3>
-                        <p className="mt-0.5 truncate text-sm text-zinc-600 dark:text-zinc-400">
-                          {[company, j.location, j.source]
-                            .filter(Boolean)
-                            .join(" · ") || "—"}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      {j.apply_url ? (
-                        <a
-                          href={applyHref(j.apply_url)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex h-9 items-center justify-center rounded-md border border-zinc-300 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                        >
-                          Apply
-                        </a>
-                      ) : null}
-                      <p className="mt-1 text-xs text-zinc-500">
-                        {formatDate(j.discovered_at ?? j.created_at)}
-                      </p>
-                    </div>
-                  </div>
-
-                  {m?.best_resume_title ? (
-                    <p className="mt-3 text-sm">
-                      <span className="text-zinc-500">Best resume to use: </span>
-                      <span className="font-medium">{m.best_resume_title}</span>
-                    </p>
-                  ) : null}
-
-                  {matchedPhrases.length > 0 || matchedKeywords.length > 0 ? (
-                    <div className="mt-2">
-                      <Chips
-                        items={[...matchedPhrases, ...matchedKeywords]}
-                        tone="match"
-                        max={10}
-                      />
-                    </div>
-                  ) : null}
-
-                  {hasDetails ? (
-                    <details className="group mt-3">
-                      <summary className="cursor-pointer list-none text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
-                        <span className="group-open:hidden">
-                          Show match details &amp; resume tweaks ▾
-                        </span>
-                        <span className="hidden group-open:inline">
-                          Hide match details ▴
-                        </span>
-                      </summary>
-
-                      <div className="mt-3 space-y-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-                        {matchedPhrases.length > 0 ? (
-                          <div>
-                            <p className="mb-1 text-xs font-medium text-zinc-500">
-                              Matched phrases
-                            </p>
-                            <Chips items={matchedPhrases} tone="match" />
-                          </div>
-                        ) : null}
-
-                        {matchedKeywords.length > 0 ? (
-                          <div>
-                            <p className="mb-1 text-xs font-medium text-zinc-500">
-                              Matched keywords
-                            </p>
-                            <Chips items={matchedKeywords} tone="match" />
-                          </div>
-                        ) : null}
-
-                        {missingKeywords.length > 0 ? (
-                          <div>
-                            <p className="mb-1 text-xs font-medium text-zinc-500">
-                              Missing from your resume
-                            </p>
-                            <Chips items={missingKeywords} tone="miss" />
-                          </div>
-                        ) : null}
-
-                        {tweaks.length > 0 ? (
-                          <div>
-                            <p className="mb-1 text-xs font-medium text-zinc-500">
-                              Suggested resume tweaks
-                            </p>
-                            <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-700 dark:text-zinc-300">
-                              {tweaks.map((t, i) => (
-                                <li key={i}>{t}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        ) : null}
-                      </div>
-                    </details>
-                  ) : null}
-
-                  <div className="mt-3 flex justify-end">
-                    <form action={dismissed ? restoreJob : dismissJob}>
-                      <input type="hidden" name="id" value={j.id} />
-                      <button
-                        type="submit"
-                        className="text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-                      >
-                        {dismissed ? "Restore" : "Dismiss"}
-                      </button>
-                    </form>
-                  </div>
-                </article>
+                <section key={bucket.key} className="space-y-3">
+                  <h2
+                    className={`mt-5 flex items-baseline gap-2 text-sm font-semibold ${bucket.headerClass}`}
+                  >
+                    {bucket.label}
+                    <span className="text-xs font-normal text-zinc-400">
+                      {bucket.sub} · {bucketJobs.length}
+                    </span>
+                  </h2>
+                  {bucketJobs.map((j) => (
+                    <JobCard key={j.id} job={j} />
+                  ))}
+                </section>
               );
             })}
 

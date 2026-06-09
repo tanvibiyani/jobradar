@@ -42,5 +42,7 @@ export type Preferences = {
   keywords: string[];
   min_salary: number | null;
   remote: boolean;
+  /** Candidate years of experience; null when the user hasn't set it. */
+  years_of_experience: number | null;
 };
 
